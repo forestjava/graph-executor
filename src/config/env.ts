@@ -11,6 +11,7 @@ const envSchema = z.object({
   NEO4J_DATABASE: z.string().nonempty(),
   NEO4J_USER: z.string().nonempty(),
   NEO4J_PASSWORD: z.string().nonempty(),
+  API_KEY: z.string().nonempty(),
 });
 export type Env = z.infer<typeof envSchema>;
 

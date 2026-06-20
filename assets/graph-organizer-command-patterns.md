@@ -64,15 +64,15 @@ RETURN n.id, n.status, n.solution
 MATCH (n {id: 'ENG-1'})
 WHERE n.deleted IS NULL
 OPTIONAL MATCH (n)-[:DEPENDS_ON]->(dep)
-  WHERE dep.deleted IS NULL
+  WHERE dep.deleted IS NULL AND dep.status <> 'done'
 OPTIONAL MATCH (blocked)-[:DEPENDS_ON]->(n)
-  WHERE blocked.deleted IS NULL
+  WHERE blocked.deleted IS NULL AND blocked.status <> 'done'
 OPTIONAL MATCH (cause)-[:LEADS_TO]->(n)
-  WHERE cause.deleted IS NULL
+  WHERE cause.deleted IS NULL AND cause.status <> 'done'
 OPTIONAL MATCH (n)-[:LEADS_TO]->(effect)
-  WHERE effect.deleted IS NULL
+  WHERE effect.deleted IS NULL AND effect.status <> 'done'
 OPTIONAL MATCH (n)-[:HAS_OPTION]->(option)
-  WHERE option.deleted IS NULL 
+  WHERE option.deleted IS NULL AND option.status <> 'done'
 RETURN
   n.id, labels(n)[0] AS label, n.title, n.status, n.summary, n.inputs,
   collect(DISTINCT {id: dep.id,     title: dep.title})[0..10]     AS dependencies,

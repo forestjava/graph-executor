@@ -1,0 +1,11 @@
+services:
+  graph-executor:
+    build: .
+    container_name: graph-executor
+    restart: unless-stopped
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true

@@ -1,4 +1,4 @@
-# Cypher patterns
+# GQL (Cypher) patterns
 
 ## Создать узел
 
@@ -68,11 +68,11 @@ OPTIONAL MATCH (n)-[:DEPENDS_ON]->(dep)
 OPTIONAL MATCH (blocked)-[:DEPENDS_ON]->(n)
   WHERE blocked.deleted IS NULL AND blocked.status <> 'done'
 OPTIONAL MATCH (cause)-[:LEADS_TO]->(n)
-  WHERE cause.deleted IS NULL AND cause.status <> 'done'
+  WHERE cause.deleted IS NULL
 OPTIONAL MATCH (n)-[:LEADS_TO]->(effect)
-  WHERE effect.deleted IS NULL AND effect.status <> 'done'
+  WHERE effect.deleted IS NULL
 OPTIONAL MATCH (n)-[:HAS_OPTION]->(option)
-  WHERE option.deleted IS NULL AND option.status <> 'done'
+  WHERE option.deleted IS NULL
 RETURN
   n.id, labels(n)[0] AS label, n.title, n.status, n.summary, n.inputs,
   collect(DISTINCT {id: dep.id,     title: dep.title})[0..10]     AS dependencies,
@@ -118,3 +118,5 @@ SET n.inputs = coalesce(n.inputs, []) + ['2026-06-18 User: "Примени пр�
     n.updatedAt = datetime()
 RETURN n.id, n.inputs
 ```
+
+---

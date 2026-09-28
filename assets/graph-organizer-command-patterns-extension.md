@@ -7,14 +7,14 @@
   -[:HAS_PRIORITY]->(Priority { level })          // без id, 1:1
   -[:HAS_URGENCY]->(Urgency { dueFrom, dueTo, mode, reason, reasonDetail, reasonNote })
   -[:HAS_EFFORT]->(Effort { size, durationValue, durationUnit, concentration, interruptible })
-  -[:DEPENDS_ON]->(blocker)
+  -[:DEPENDS_ON]->(subtask)
 
 (Priority|Urgency|Effort)-[:RANKS_ABOVE]->(same label)
 ```
 
 ## Примеры применения
 
-Узлы, свойства и рёбра из [docs/planning-ontology.md](../../../docs/planning-ontology.md).
+Узлы, свойства и рёбра из [Domain model extension](ontology://graph-organizer-domain-model-extension).
 
 ## 1. Важность без срочности
 
@@ -98,5 +98,26 @@ MERGE (p1)-[:RANKS_ABOVE]->(p2)
 2. Effective Priority + Urgency на `NOW()`.
 3. Effort: ≤ 45 min, `interruptible: true` предпочтительно.
 4. Ответ: 3–5 кандидатов.
+
+## 8. Эффективная важность и срочность
+
+Наследование от ближайшего незакрытого и неудалённого родителя (см. «Наследование по DEPENDS_ON»
+в [Domain model extension](ontology://graph-organizer-domain-model-extension)).
+
+```cypher
+MATCH (n {id: $id}) WHERE n.deleted IS NULL
+OPTIONAL MATCH (n)-[:HAS_PRIORITY]->(own:Priority)
+OPTIONAL MATCH path = (a)-[:DEPENDS_ON*1..]->(n)
+  WHERE own IS NULL AND a.deleted IS NULL AND coalesce(a.status, '') <> 'done'
+    AND (a)-[:HAS_PRIORITY]->()
+WITH n, own, a ORDER BY length(path)
+WITH n, own, head(collect(a)) AS nearest
+OPTIONAL MATCH (nearest)-[:HAS_PRIORITY]->(inherited:Priority)
+RETURN n.id AS id, coalesce(own.level, inherited.level) AS priority,
+       CASE WHEN own IS NULL THEN nearest.id END AS inheritedFrom
+```
+
+Для Urgency запрос такой же, с заменой `HAS_PRIORITY` на `HAS_URGENCY` и `Priority` на `Urgency`
+(возвращать нужные поля Urgency вместо `level`).
 
 ---

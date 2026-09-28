@@ -62,11 +62,11 @@ Snooze, waiting, check-back, delegation-follow-up — все через **`dueFr
 1. Пул: Task|Problem, deleted IS NULL, status <> 'done'
 
 2. Важность
-   effective Priority (с наследованием §6)
+   effective Priority (с наследованием, см. patterns «Эффективная важность и срочность»)
    → что высвечивается по importance
 
 3. Срочность
-   effective Urgency
+   effective Urgency (с наследованием, см. там же)
    исключить: dueFrom > NOW()
    поднять: dueTo близко или просрочен
    → что высвечивается / убирается по несрочности

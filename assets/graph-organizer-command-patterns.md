@@ -18,13 +18,13 @@
 
 ## 1. Важность без срочности
 
-**Пользователь:** «Стратегия контрактов ALB-6 — очень важно, но не горит.»
+**Пользователь:** «Стратегия контрактов ALB-6 - очень важно, но не горит.»
 
 ```
 (ALB-6:Task)-[:HAS_PRIORITY]->(:Priority { level: 'high' })
 ```
 
-Urgency не задаём — без близкого `dueTo`.
+Urgency не задаём - без близкого `dueTo`.
 
 ## 2. Snooze vs дедлайн
 
@@ -54,7 +54,7 @@ Urgency не задаём — без близкого `dueTo`.
 
 ## 4. Effort
 
-**Пользователь:** «ALB-7 — часа два, deep focus, без отвлечений.»
+**Пользователь:** «ALB-7 - часа два, deep focus, без отвлечений.»
 
 ```
 (ALB-7)-[:HAS_EFFORT]->(:Effort {
@@ -71,7 +71,7 @@ Urgency не задаём — без близкого `dueTo`.
 
 ## 5. Commitment
 
-**Пользователь:** «Обещал дочери — кино в субботу, подготовить до пятницы.»
+**Пользователь:** «Обещал дочери - кино в субботу, подготовить до пятницы.»
 
 ```
 (TASK-…)-[:HAS_URGENCY]->(:Urgency {
@@ -138,11 +138,11 @@ FOR (t:Task) REQUIRE t.occurrenceKey IS UNIQUE
 
 ```cypher
 MERGE (s:Series {id: $seriesId})
+ON CREATE SET s.createdAt = datetime()
 SET s.timeZone = $timeZone, s.frequency = $frequency, s.interval = $interval,
     s.byWeekday = $byWeekday, s.byMonthDay = $byMonthDay, s.localTime = $localTime,
     s.validFrom = $validFrom, s.validTo = $validTo, s.title = $title,
     s.prefix = $prefix, s.updatedAt = datetime()
-ON CREATE SET s.createdAt = datetime()
 WITH s
 UNWIND $slots AS slot
 MERGE (t:Task {occurrenceKey: slot.key})
@@ -150,6 +150,7 @@ ON CREATE SET t.id = slot.id, t.prefix = $prefix, t.seriesId = s.id,
     t.title = slot.title, t.status = 'open', t.summary = '',
     t.scheduleRole = 'execution', t.createdAt = datetime()
 SET t.updatedAt = datetime()
+WITH t, slot
 MERGE (t)-[:HAS_URGENCY]->(u:Urgency)
 ON CREATE SET u.dueFrom = datetime(slot.start), u.dueTo = datetime(slot.end),
     u.reason = 'window'
@@ -180,60 +181,182 @@ SET u.dueFrom = coalesce(datetime($dueFrom), u.dueFrom),
 RETURN t.id AS id, t.occurrenceKey AS occurrenceKey, u.dueFrom AS dueFrom, u.dueTo AS dueTo
 ```
 
+## Время в выборках
+
+`$windowFrom`, `$windowTo` и `$now` передаются строками ISO-8601 со смещением. `$timeZone` задаёт пояс для сохранённого `date`.
+
+`date` в `dueFrom` становится началом этого местного дня. `date` в `dueTo` становится концом этого местного дня. `datetime` остаётся своим мгновением. Сравнение выполняется между такими `datetime`.
+
+Точка: `dueFrom` и `dueTo` дают одно мгновение. Точка входит в окно, когда это мгновение равно границе окна или лежит внутри него. Интервал входит в окно, когда его начало не позже конца окна и его конец не раньше начала окна.
+
 ## 13. События окна
 
 ```cypher
-MATCH (n)-[:HAS_URGENCY]->(u:Urgency)
-WHERE n.deleted IS NULL AND coalesce(n.status, '') <> 'done'
+MATCH (n:Task|Problem)-[:HAS_URGENCY]->(u:Urgency)
+WHERE n.id IS NOT NULL
+  AND n.deleted IS NULL AND coalesce(n.status, '') <> 'done'
   AND u.reason = 'window'
-  AND u.dueFrom < datetime($windowTo) AND u.dueTo > datetime($windowFrom)
-RETURN n.id AS id, n.title AS title, u.dueFrom AS dueFrom, u.dueTo AS dueTo
-ORDER BY u.dueFrom, n.id
+WITH n, u,
+  CASE
+    WHEN u.dueFrom IS NULL THEN null
+    WHEN u.dueFrom.hour IS NULL THEN datetime({
+      year: u.dueFrom.year, month: u.dueFrom.month, day: u.dueFrom.day,
+      timezone: $timeZone
+    })
+    ELSE datetime(u.dueFrom)
+  END AS fromAt,
+  CASE
+    WHEN u.dueTo IS NULL THEN null
+    WHEN u.dueTo.hour IS NULL THEN datetime({
+      year: u.dueTo.year, month: u.dueTo.month, day: u.dueTo.day,
+      hour: 23, minute: 59, second: 59, nanosecond: 999999999,
+      timezone: $timeZone
+    })
+    ELSE datetime(u.dueTo)
+  END AS toAt,
+  datetime($windowFrom) AS windowFrom,
+  datetime($windowTo) AS windowTo
+WHERE (fromAt = toAt AND fromAt >= windowFrom AND fromAt <= windowTo)
+   OR (fromAt <= windowTo AND toAt >= windowFrom)
+RETURN n.id AS id, n.title AS title, fromAt AS dueFrom, toAt AS dueTo,
+       fromAt = toAt AS point
+ORDER BY fromAt, n.id
 SKIP $shown
 ```
 
 ## 14. Обязательства
 
-Открытые экземпляры серии входят в эту выборку.
+`selection = 'in_period'`: обязательство или открытый экземпляр серии, чьё окно пересекает названный период, включая границы и точки на границе.
+
+`selection = 'violation'`: то же обязательство, у которого конец срока раньше начала названного периода. Экземпляр серии только с `dueFrom` раньше начала периода попадает сюда же.
 
 ```cypher
-MATCH (n)
-WHERE n.deleted IS NULL AND coalesce(n.status, '') <> 'done'
-  AND (
-    EXISTS { MATCH (n)-[:HAS_URGENCY]->(u) WHERE u.reason IN ['commitment', 'deadline'] }
-    OR n.seriesId IS NOT NULL
-  )
-RETURN n.id AS id, n.title AS title, n.seriesId AS seriesId, n.occurrenceKey AS occurrenceKey
-ORDER BY n.id
+MATCH (n:Task|Problem)
+WHERE n.id IS NOT NULL
+  AND n.deleted IS NULL AND coalesce(n.status, '') <> 'done'
+OPTIONAL MATCH (n)-[:HAS_URGENCY]->(u)
+WITH n, u
+WHERE u.reason IN ['commitment', 'deadline'] OR n.seriesId IS NOT NULL
+WITH n, u,
+  CASE
+    WHEN u IS NULL OR u.dueFrom IS NULL THEN null
+    WHEN u.dueFrom.hour IS NULL THEN datetime({
+      year: u.dueFrom.year, month: u.dueFrom.month, day: u.dueFrom.day,
+      timezone: $timeZone
+    })
+    ELSE datetime(u.dueFrom)
+  END AS fromAt,
+  CASE
+    WHEN u IS NULL OR u.dueTo IS NULL THEN null
+    WHEN u.dueTo.hour IS NULL THEN datetime({
+      year: u.dueTo.year, month: u.dueTo.month, day: u.dueTo.day,
+      hour: 23, minute: 59, second: 59, nanosecond: 999999999,
+      timezone: $timeZone
+    })
+    ELSE datetime(u.dueTo)
+  END AS toAt,
+  datetime($windowFrom) AS windowFrom,
+  datetime($windowTo) AS windowTo
+WITH n, u, fromAt, toAt, windowFrom, windowTo,
+  CASE
+    WHEN toAt IS NOT NULL AND toAt < windowFrom THEN 'violation'
+    WHEN toAt IS NULL AND fromAt IS NOT NULL AND fromAt < windowFrom THEN 'violation'
+    WHEN (fromAt IS NOT NULL OR toAt IS NOT NULL)
+      AND (fromAt IS NULL OR fromAt <= windowTo)
+      AND (toAt IS NULL OR toAt >= windowFrom) THEN 'in_period'
+    ELSE null
+  END AS selection
+WHERE selection IS NOT NULL
+RETURN n.id AS id, n.title AS title, n.seriesId AS seriesId,
+       n.occurrenceKey AS occurrenceKey, u.reason AS reason,
+       fromAt AS dueFrom, toAt AS dueTo, selection
+ORDER BY selection, fromAt, n.id
 SKIP $shown
 ```
 
 ## 15. Исполнимые шаги
 
-`$prefix` равен `null`, когда контекст не назван.
+Кандидаты: `Task` и `Problem` с доменным `id`. `$prefix`, `$assignee` и `$namedId` равны `null`, когда соответствующее условие в реплике не названо.
+
+Шаг входит в названный период. Действующий snooze (`reason: snooze` и `dueFrom` позже `$now`) остаётся вне выборки. Делегированный шаг входит, когда `responsible` пуст, `dueFrom` уже наступил или `id` шага равен `$namedId`.
 
 ```cypher
-MATCH (n)
-WHERE n.deleted IS NULL AND coalesce(n.status, '') <> 'done'
+MATCH (n:Task|Problem)
+WHERE n.id IS NOT NULL
+  AND n.deleted IS NULL AND coalesce(n.status, '') <> 'done'
   AND ($prefix IS NULL OR n.prefix = $prefix)
+  AND ($assignee IS NULL OR n.assignee = $assignee)
   AND NOT EXISTS {
-    MATCH (n)-[:DEPENDS_ON]->(b)
-    WHERE b.deleted IS NULL AND coalesce(b.status, '') <> 'done'
+    MATCH (n)-[:DEPENDS_ON]->(b:Task|Problem)
+    WHERE b.id IS NOT NULL
+      AND b.deleted IS NULL AND coalesce(b.status, '') <> 'done'
   }
-RETURN n.id AS id, n.title AS title, n.prefix AS prefix, n.assignee AS assignee,
-       n.scheduleRole AS scheduleRole
+OPTIONAL MATCH (n)-[:HAS_URGENCY]->(u)
+WITH n, u,
+  CASE
+    WHEN u IS NULL OR u.dueFrom IS NULL THEN null
+    WHEN u.dueFrom.hour IS NULL THEN datetime({
+      year: u.dueFrom.year, month: u.dueFrom.month, day: u.dueFrom.day,
+      timezone: $timeZone
+    })
+    ELSE datetime(u.dueFrom)
+  END AS fromAt,
+  CASE
+    WHEN u IS NULL OR u.dueTo IS NULL THEN null
+    WHEN u.dueTo.hour IS NULL THEN datetime({
+      year: u.dueTo.year, month: u.dueTo.month, day: u.dueTo.day,
+      hour: 23, minute: 59, second: 59, nanosecond: 999999999,
+      timezone: $timeZone
+    })
+    ELSE datetime(u.dueTo)
+  END AS toAt,
+  datetime($windowFrom) AS windowFrom,
+  datetime($windowTo) AS windowTo,
+  datetime($now) AS now
+WHERE (fromAt IS NULL OR fromAt <= windowTo)
+  AND (toAt IS NULL OR toAt >= windowFrom)
+  AND (
+    u IS NULL OR u.reason <> 'snooze'
+    OR fromAt IS NULL OR fromAt <= now
+  )
+  AND (
+    u IS NULL OR u.reason <> 'delegation'
+    OR coalesce(u.responsible, '') = ''
+    OR fromAt IS NULL OR fromAt <= now
+    OR ($namedId IS NOT NULL AND n.id = $namedId)
+  )
+RETURN n.id AS id, n.title AS title, n.prefix AS prefix,
+       n.assignee AS assignee, n.scheduleRole AS scheduleRole,
+       u.reason AS reason, u.remainingAction AS remainingAction,
+       u.responsible AS responsible,
+       fromAt AS dueFrom, toAt AS dueTo,
+       windowFrom AS windowFrom, windowTo AS windowTo
 ORDER BY n.id
 SKIP $shown
 ```
 
 ## 16. Открытые задачи с прошедшим dueTo
 
+Сравнение идёт по нормализованному концу срока и `$now`.
+
 ```cypher
-MATCH (n)-[:HAS_URGENCY]->(u)
-WHERE n.deleted IS NULL AND coalesce(n.status, '') <> 'done'
-  AND u.dueTo < datetime($now)
-RETURN n.id AS id, n.title AS title, u.dueTo AS dueTo, u.reason AS reason
-ORDER BY u.dueTo, n.id
+MATCH (n:Task|Problem)-[:HAS_URGENCY]->(u)
+WHERE n.id IS NOT NULL
+  AND n.deleted IS NULL AND coalesce(n.status, '') <> 'done'
+WITH n, u,
+  CASE
+    WHEN u.dueTo IS NULL THEN null
+    WHEN u.dueTo.hour IS NULL THEN datetime({
+      year: u.dueTo.year, month: u.dueTo.month, day: u.dueTo.day,
+      hour: 23, minute: 59, second: 59, nanosecond: 999999999,
+      timezone: $timeZone
+    })
+    ELSE datetime(u.dueTo)
+  END AS toAt,
+  datetime($now) AS now
+WHERE toAt < now
+RETURN n.id AS id, n.title AS title, toAt AS dueTo, u.reason AS reason
+ORDER BY toAt, n.id
 SKIP $shown
 ```
 

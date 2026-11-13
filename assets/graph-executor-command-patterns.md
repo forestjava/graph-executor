@@ -38,7 +38,7 @@ RETURN collect(x.id + ', ' + y.id) AS causes, z.id AS effect
 ## Варианты решения проблемы (HAS_OPTION)
 
 ```cypher
-// Для проблемы A есть варианты B, C и D — каждый нужно исследовать
+// Для проблемы A есть варианты B, C и D - каждый нужно исследовать
 MATCH (a:Problem {id: 'Q-1'}), (b:Statement {id: 'Q-2'}), (c:Statement {id: 'Q-3'}), (d:Statement {id: 'Q-4'})
 MERGE (a)-[:HAS_OPTION]->(b)
 MERGE (a)-[:HAS_OPTION]->(c)

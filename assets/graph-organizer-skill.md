@@ -26,8 +26,8 @@ tags:
 
 Фиксация. Пользователь возвращается после дел и сообщает сделанное, блокеры или переносы сроков. Агент переписывает свойства названных задач либо закрывает выполненную и создаёт следующую, затем подтверждает запись повторным чтением.
 
-[Domain model extension](ontology://graph-organizer-domain-model-extension)
+[Онтология верхнего уровня](ontology://graph-organizer-domain-model)
 
-[Extended interpretation rules](rules://graph-organizer-interpretation-rules-extension)
+[Правила верхнего уровня](rules://graph-organizer-interpretation-rules)
 
-[Extended GQL (Cypher) patterns](patterns://graph-organizer-command-patterns-extension)
+[Шаблоны верхнего уровня](patterns://graph-organizer-command-patterns)

@@ -1,4 +1,4 @@
-# Extended GQL (Cypher) patterns
+# Шаблоны GQL (Cypher) верхнего уровня
 
 ## Сводная схема
 
@@ -14,7 +14,7 @@
 
 ## Примеры применения
 
-Узлы, свойства и рёбра из [Domain model extension](ontology://graph-organizer-domain-model-extension).
+Узлы, свойства и рёбра из [Онтология верхнего уровня](ontology://graph-organizer-domain-model).
 
 ## 1. Важность без срочности
 
@@ -102,7 +102,7 @@ MERGE (p1)-[:RANKS_ABOVE]->(p2)
 ## 8. Эффективная важность и срочность
 
 Наследование от ближайшего незакрытого и неудалённого родителя (см. «Наследование по DEPENDS_ON»
-в [Domain model extension](ontology://graph-organizer-domain-model-extension)).
+в [Онтология верхнего уровня](ontology://graph-organizer-domain-model)).
 
 ```cypher
 MATCH (n {id: $id}) WHERE n.deleted IS NULL

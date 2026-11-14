@@ -1,5 +1,6 @@
 import neo4j, { type Driver } from "neo4j-driver";
 import { env } from "../../config/env.js";
+import { bindIntegers } from "./bindIntegers.js";
 import { neo4jSerialize } from "./serialize.js";
 
 export type ExecuteResult = {
@@ -39,9 +40,11 @@ export class Neo4jService {
     query: string,
     parameters: Record<string, unknown> = {},
   ): Promise<ExecuteResult> {
-    const { records } = await this.driver.executeQuery(query, parameters, {
-      database: this.config.database,
-    });
+    const { records } = await this.driver.executeQuery(
+      query,
+      bindIntegers(parameters) as Record<string, unknown>,
+      { database: this.config.database },
+    );
 
     return {
       records: records.map((record) => {

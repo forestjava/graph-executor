@@ -145,23 +145,18 @@ Enum задаёт корзину; рёбра - нюанс внутри или м
 
 ## 4. Серия и экземпляр
 
-### Series
-
-**Label:** `Series`  
-Доменный `id`.
+Продолжающаяся задача («Писать статьи», «Проверять отклики») сама является серией. Правило повторения записывается на этот `Task`. Будущий экземпляр один: подзадача этой задачи по `DEPENDS_ON`. Его дата входит в ряд от `validFrom` до `validTo` включительно.
 
 | Свойство | Тип | Смысл |
 |----------|-----|--------|
-| `timeZone` | string | Часовой пояс серии |
+| `timeZone` | string | Часовой пояс задачи |
 | `frequency` | enum | `daily` · `weekly` · `monthly` · `yearly` |
 | `interval` | integer | Шаг повторения, целое, минимум 1 |
 | `byWeekday` | int[] | Числа 1–7, понедельник = 1 |
 | `byMonthDay` | integer | Число месяца, 1–31 |
 | `localTime` | string | `HH:mm` |
-| `validFrom` | date | `YYYY-MM-DD`, начало слотов включительно |
-| `validTo` | date | `YYYY-MM-DD`, конец слотов включительно |
-
-Слоты лежат на датах от `validFrom` до `validTo` включительно.
+| `validFrom` | date | `YYYY-MM-DD`, первая дата ряда включительно |
+| `validTo` | date | `YYYY-MM-DD`, последняя дата ряда включительно |
 
 ### Экземпляр
 
@@ -169,12 +164,13 @@ Enum задаёт корзину; рёбра - нюанс внутри или м
 
 | Свойство | Тип | Смысл |
 |----------|-----|--------|
-| `seriesId` | string | `id` серии |
-| `occurrenceKey` | string | `seriesId + ':' + localStart` |
+| `occurrenceKey` | string | `id` продолжающейся задачи + `':'` + `localStart` |
 | `scheduleRole` | enum | `preparation` · `execution` · `recovery`. Пустое значение равно `execution` |
 | `assignee` | string | Исполнитель |
 
 `localStart`: строка `YYYY-MM-DDTHH:mm:ss` без суффикса зоны. `id` назначается при создании и дальше не меняется. Повторная запись находит задачу по `occurrenceKey`. Перенос меняет `dueFrom` и `dueTo` у связанной `Urgency` и оставляет `id` и `occurrenceKey`.
+
+Завершение экземпляра (`status: done`) и отмена (`deleted: true`) в той же записи создают следующий будущий экземпляр. Его `localStart` - ближайшая дата ряда строго после `localStart` этого экземпляра. Дата берётся из `frequency`, `interval`, `byWeekday`, `byMonthDay` и `localTime` продолжающейся задачи. Следующий экземпляр создаётся, когда эта дата не позже `validTo`.
 
 ### Событие окна и обязательство
 
@@ -227,7 +223,7 @@ Enum задаёт корзину; рёбра - нюанс внутри или м
 | `HAS_URGENCY` | work → Urgency | Срочность (1:1) |
 | `HAS_EFFORT` | work → Effort | Усилия (1:1) |
 | `RANKS_ABOVE` | Priority/Urgency/Effort → same label | Относительное «больше / срочнее / тяжелее» |
-| `DEPENDS_ON` | parent → subtask | Без изменений |
+| `DEPENDS_ON` | parent → subtask | То же ребро: зонтик, блокер, экземпляр продолжающейся задачи |
 | `PART_OF` | member → context | Принадлежность контексту |
 
 ---

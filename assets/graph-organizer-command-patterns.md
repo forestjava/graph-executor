@@ -132,27 +132,27 @@ CREATE CONSTRAINT task_occurrence_key IF NOT EXISTS
 FOR (t:Task) REQUIRE t.occurrenceKey IS UNIQUE
 ```
 
-## 10. Запись серии и слотов
+## 10. Запись серии и ближайшего экземпляра
 
-Даты существующего ключа запрос не перезаписывает.
+Один будущий экземпляр. Даты существующего ключа запрос не перезаписывает.
 
 ```cypher
-MERGE (s:Series {id: $seriesId})
-ON CREATE SET s.createdAt = datetime()
+MERGE (s:Task {id: $seriesId})
+ON CREATE SET s.createdAt = datetime(), s.title = $title, s.prefix = $prefix,
+    s.status = 'open', s.summary = ''
 SET s.timeZone = $timeZone, s.frequency = $frequency, s.interval = $interval,
     s.byWeekday = $byWeekday, s.byMonthDay = $byMonthDay, s.localTime = $localTime,
-    s.validFrom = $validFrom, s.validTo = $validTo, s.title = $title,
-    s.prefix = $prefix, s.updatedAt = datetime()
+    s.validFrom = $validFrom, s.validTo = $validTo, s.updatedAt = datetime()
 WITH s
-UNWIND $slots AS slot
-MERGE (t:Task {occurrenceKey: slot.key})
-ON CREATE SET t.id = slot.id, t.prefix = $prefix, t.seriesId = s.id,
-    t.title = slot.title, t.status = 'open', t.summary = '',
+MERGE (t:Task {occurrenceKey: $key})
+ON CREATE SET t.id = $id, t.prefix = $prefix,
+    t.title = $occurrenceTitle, t.status = 'open', t.summary = '',
     t.scheduleRole = 'execution', t.createdAt = datetime()
 SET t.updatedAt = datetime()
-WITH t, slot
+MERGE (s)-[:DEPENDS_ON]->(t)
+WITH t
 MERGE (t)-[:HAS_URGENCY]->(u:Urgency)
-ON CREATE SET u.dueFrom = datetime(slot.start), u.dueTo = datetime(slot.end),
+ON CREATE SET u.dueFrom = datetime($start), u.dueTo = datetime($end),
     u.reason = 'window'
 RETURN t.id AS id, t.occurrenceKey AS occurrenceKey
 ```
@@ -160,8 +160,8 @@ RETURN t.id AS id, t.occurrenceKey AS occurrenceKey
 ## 11. Чтение после записи
 
 ```cypher
-MATCH (t:Task {seriesId: $seriesId})
-WHERE t.deleted IS NULL
+MATCH (s:Task {id: $seriesId})-[:DEPENDS_ON]->(t:Task)
+WHERE t.occurrenceKey IS NOT NULL AND t.deleted IS NULL
 OPTIONAL MATCH (t)-[:HAS_URGENCY]->(u)
 RETURN t.id AS id, t.occurrenceKey AS occurrenceKey, t.status AS status,
        u.dueFrom AS dueFrom, u.dueTo AS dueTo
@@ -199,7 +199,7 @@ WHERE n.id IS NOT NULL
 WITH n, u,
   CASE
     WHEN u.dueFrom IS NULL THEN null
-    WHEN u.dueFrom.hour IS NULL THEN datetime({
+    WHEN NOT toString(u.dueFrom) CONTAINS 'T' THEN datetime({
       year: u.dueFrom.year, month: u.dueFrom.month, day: u.dueFrom.day,
       timezone: $timeZone
     })
@@ -207,7 +207,7 @@ WITH n, u,
   END AS fromAt,
   CASE
     WHEN u.dueTo IS NULL THEN null
-    WHEN u.dueTo.hour IS NULL THEN datetime({
+    WHEN NOT toString(u.dueTo) CONTAINS 'T' THEN datetime({
       year: u.dueTo.year, month: u.dueTo.month, day: u.dueTo.day,
       hour: 23, minute: 59, second: 59, nanosecond: 999999999,
       timezone: $timeZone
@@ -235,12 +235,14 @@ MATCH (n:Task|Problem)
 WHERE n.id IS NOT NULL
   AND n.deleted IS NULL AND coalesce(n.status, '') <> 'done'
 OPTIONAL MATCH (n)-[:HAS_URGENCY]->(u)
-WITH n, u
-WHERE u.reason IN ['commitment', 'deadline'] OR n.seriesId IS NOT NULL
-WITH n, u,
+OPTIONAL MATCH (s:Task)-[:DEPENDS_ON]->(n)
+WHERE s.frequency IS NOT NULL
+WITH n, u, s
+WHERE u.reason IN ['commitment', 'deadline'] OR s IS NOT NULL
+WITH n, u, s,
   CASE
     WHEN u IS NULL OR u.dueFrom IS NULL THEN null
-    WHEN u.dueFrom.hour IS NULL THEN datetime({
+    WHEN NOT toString(u.dueFrom) CONTAINS 'T' THEN datetime({
       year: u.dueFrom.year, month: u.dueFrom.month, day: u.dueFrom.day,
       timezone: $timeZone
     })
@@ -248,7 +250,7 @@ WITH n, u,
   END AS fromAt,
   CASE
     WHEN u IS NULL OR u.dueTo IS NULL THEN null
-    WHEN u.dueTo.hour IS NULL THEN datetime({
+    WHEN NOT toString(u.dueTo) CONTAINS 'T' THEN datetime({
       year: u.dueTo.year, month: u.dueTo.month, day: u.dueTo.day,
       hour: 23, minute: 59, second: 59, nanosecond: 999999999,
       timezone: $timeZone
@@ -257,7 +259,7 @@ WITH n, u,
   END AS toAt,
   datetime($windowFrom) AS windowFrom,
   datetime($windowTo) AS windowTo
-WITH n, u, fromAt, toAt, windowFrom, windowTo,
+WITH n, u, s, fromAt, toAt, windowFrom, windowTo,
   CASE
     WHEN toAt IS NOT NULL AND toAt < windowFrom THEN 'violation'
     WHEN toAt IS NULL AND fromAt IS NOT NULL AND fromAt < windowFrom THEN 'violation'
@@ -267,7 +269,7 @@ WITH n, u, fromAt, toAt, windowFrom, windowTo,
     ELSE null
   END AS selection
 WHERE selection IS NOT NULL
-RETURN n.id AS id, n.title AS title, n.seriesId AS seriesId,
+RETURN n.id AS id, n.title AS title, s.id AS seriesId,
        n.occurrenceKey AS occurrenceKey, u.reason AS reason,
        fromAt AS dueFrom, toAt AS dueTo, selection
 ORDER BY selection, fromAt, n.id
@@ -295,7 +297,7 @@ OPTIONAL MATCH (n)-[:HAS_URGENCY]->(u)
 WITH n, u,
   CASE
     WHEN u IS NULL OR u.dueFrom IS NULL THEN null
-    WHEN u.dueFrom.hour IS NULL THEN datetime({
+    WHEN NOT toString(u.dueFrom) CONTAINS 'T' THEN datetime({
       year: u.dueFrom.year, month: u.dueFrom.month, day: u.dueFrom.day,
       timezone: $timeZone
     })
@@ -303,7 +305,7 @@ WITH n, u,
   END AS fromAt,
   CASE
     WHEN u IS NULL OR u.dueTo IS NULL THEN null
-    WHEN u.dueTo.hour IS NULL THEN datetime({
+    WHEN NOT toString(u.dueTo) CONTAINS 'T' THEN datetime({
       year: u.dueTo.year, month: u.dueTo.month, day: u.dueTo.day,
       hour: 23, minute: 59, second: 59, nanosecond: 999999999,
       timezone: $timeZone
@@ -346,7 +348,7 @@ WHERE n.id IS NOT NULL
 WITH n, u,
   CASE
     WHEN u.dueTo IS NULL THEN null
-    WHEN u.dueTo.hour IS NULL THEN datetime({
+    WHEN NOT toString(u.dueTo) CONTAINS 'T' THEN datetime({
       year: u.dueTo.year, month: u.dueTo.month, day: u.dueTo.day,
       hour: 23, minute: 59, second: 59, nanosecond: 999999999,
       timezone: $timeZone
@@ -380,6 +382,50 @@ CREATE (n:Task {
   createdAt: datetime(), updatedAt: datetime()
 })
 RETURN old.id AS closedId, n.id AS nextId
+```
+
+## 19. Следующий экземпляр после завершения
+
+`$key`, `$start` и `$end` агент считает до запроса. Запрос выполняется, когда эта дата не позже `validTo`.
+
+```cypher
+MATCH (s:Task)-[:DEPENDS_ON]->(t:Task {id: $id})
+WHERE s.frequency IS NOT NULL AND t.deleted IS NULL
+SET t.status = 'done', t.updatedAt = datetime()
+WITH s, t
+MERGE (n:Task {occurrenceKey: $key})
+ON CREATE SET n.id = $newId, n.prefix = coalesce(s.prefix, t.prefix),
+    n.title = $occurrenceTitle, n.status = 'open', n.summary = '',
+    n.scheduleRole = 'execution', n.createdAt = datetime()
+SET n.updatedAt = datetime()
+MERGE (s)-[:DEPENDS_ON]->(n)
+WITH n
+MERGE (n)-[:HAS_URGENCY]->(u:Urgency)
+ON CREATE SET u.dueFrom = datetime($start), u.dueTo = datetime($end),
+    u.reason = 'window'
+RETURN n.id AS id, n.occurrenceKey AS occurrenceKey
+```
+
+## 20. Следующий экземпляр после отмены
+
+`$key`, `$start` и `$end` те же, что в завершении. Отмена ставит `deleted: true`.
+
+```cypher
+MATCH (s:Task)-[:DEPENDS_ON]->(t:Task {id: $id})
+WHERE s.frequency IS NOT NULL AND t.deleted IS NULL
+SET t.deleted = true, t.updatedAt = datetime()
+WITH s, t
+MERGE (n:Task {occurrenceKey: $key})
+ON CREATE SET n.id = $newId, n.prefix = coalesce(s.prefix, t.prefix),
+    n.title = $occurrenceTitle, n.status = 'open', n.summary = '',
+    n.scheduleRole = 'execution', n.createdAt = datetime()
+SET n.updatedAt = datetime()
+MERGE (s)-[:DEPENDS_ON]->(n)
+WITH n
+MERGE (n)-[:HAS_URGENCY]->(u:Urgency)
+ON CREATE SET u.dueFrom = datetime($start), u.dueTo = datetime($end),
+    u.reason = 'window'
+RETURN n.id AS id, n.occurrenceKey AS occurrenceKey
 ```
 
 ---
